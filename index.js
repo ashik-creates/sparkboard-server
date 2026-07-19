@@ -58,7 +58,7 @@ async function verifyToken(req, res, next) {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const db = client.db("sparkboard");
 
@@ -147,8 +147,24 @@ async function run() {
     });
 
     // ============================================
+    // GET EVERY IDEAS
+    // ============================================
+    app.get("/api/all-ideas",verifyToken, async (req, res) => {
+      try {
+        const ideas = await ideasCollection.find({}).toArray();
+        res.send(ideas);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          message: "Failed to fetch all ideas.",
+        });
+      }
+    });
+
+    // ============================================
     // API CALL
     // ============================================
+    
 
     app.post("/api/ideas/:id/validate", async (req, res) => {
       try {
@@ -415,13 +431,25 @@ Return EXACTLY this structure:
         const totalCategories = new Set(ideas.map((idea) => idea.category))
           .size;
 
+        const categoryMap = {};
+
+        ideas.forEach((idea) => {
+          categoryMap[idea.category] = (categoryMap[idea.category] || 0) + 1;
+        });
+
+        const categoryStats = Object.entries(categoryMap).map(
+          ([name, value]) => ({
+            name,
+            value,
+          }),
+        );
+
         res.send({
           totalIdeas,
           totalCategories,
+          categoryStats,
         });
       } catch (error) {
-        console.error(error);
-
         res.status(500).send({
           message: "Failed to fetch statistics.",
         });
