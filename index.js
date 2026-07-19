@@ -151,7 +151,7 @@ async function run() {
     // ============================================
     app.get("/api/all-ideas",verifyToken, async (req, res) => {
       try {
-        const ideas = await ideasCollection.find({}).toArray();
+        const ideas = await ideasCollection.find({}).sort({ createdAt: -1 }).toArray();
         res.send(ideas);
       } catch (error) {
         console.error(error);
