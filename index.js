@@ -284,6 +284,102 @@ Return EXACTLY this JSON:
       }
     });
 
+    app.post("/api/ideas/:id/improve", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const idea = await ideasCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!idea) {
+          return res.status(404).json({
+            success: false,
+            message: "Idea not found",
+          });
+        }
+
+        const prompt = `
+You are a successful startup founder, product strategist, and investor.
+
+Your job is to improve the startup idea below.
+
+Title:
+${idea.title}
+
+Short Description:
+${idea.shortDescription}
+
+Description:
+${idea.description}
+
+Category:
+${idea.category}
+
+Return ONLY valid JSON.
+
+Rules:
+- Make the title stronger but realistic.
+- Rewrite the short description professionally.
+- Rewrite the full description with more clarity.
+- Suggest 5 useful features.
+- Suggest 4 target customer groups.
+- Suggest the best business model.
+- Suggest 5 go-to-market strategies.
+- Suggest 5 marketing ideas.
+
+Return EXACTLY this structure:
+
+{
+  "improvedTitle":"",
+  "improvedShortDescription":"",
+  "improvedDescription":"",
+  "newFeatures":[],
+  "targetCustomers":[],
+  "businessModel":"",
+  "goToMarket":[],
+  "marketingIdeas":[]
+}
+`;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-flash-latest",
+          contents: prompt,
+        });
+
+        const report = JSON.parse(
+          response.text
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim(),
+        );
+
+        await ideasCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+          },
+          {
+            $set: {
+              improvementReport: report,
+              improvedAt: new Date(),
+            },
+          },
+        );
+
+        res.send({
+          success: true,
+          improvementReport: report,
+        });
+      } catch (error) {
+        console.log(error);
+
+        res.status(500).send({
+          success: false,
+          message: error.message,
+        });
+      }
+    });
+
     // ============================================
     // FEATURED IDEAS
     // ============================================
