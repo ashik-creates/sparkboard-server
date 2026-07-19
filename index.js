@@ -1,17 +1,10 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { GoogleGenAI } from "@google/genai";
+import { MongoClient, ObjectId, ServerApiVersion } from "mongodb";
 
-import {
-  MongoClient,
-  ObjectId,
-  ServerApiVersion,
-} from "mongodb";
-
-import {
-  createRemoteJWKSet,
-  jwtVerify,
-} from "jose";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 dotenv.config();
 
@@ -20,6 +13,10 @@ const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
 
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -30,7 +27,7 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 });
 
 const JWKS = createRemoteJWKSet(
-  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
 );
 
 async function verifyToken(req, res, next) {
@@ -149,7 +146,145 @@ async function run() {
       res.send(idea);
     });
 
-        // ============================================
+    // ============================================
+    // API CALL
+    // ============================================
+
+    app.post("/api/ideas/:id/validate", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const idea = await ideasCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!idea) {
+          return res.status(404).json({
+            success: false,
+            message: "Idea not found",
+          });
+        }
+
+        const prompt = `
+You are an experienced startup mentor, venture capitalist, and product strategist.
+
+Analyze the startup idea below and return ONLY valid JSON.
+Do NOT include markdown, explanations, or code fences.
+
+Startup Idea
+
+Title:
+${idea.title}
+
+Short Description:
+${idea.shortDescription}
+
+Description:
+${idea.description}
+
+Category:
+${idea.category}
+
+Evaluation Rules
+
+1. Score each category from 0 to 20.
+
+- innovation
+- marketDemand
+- businessViability
+- technicalFeasibility
+- scalability
+
+2. overallScore MUST equal the sum of those five scores.
+
+3. overallScore MUST be an integer between 0 and 100.
+
+4. Use these values only:
+
+marketPotential:
+- Low
+- Medium
+- High
+
+technicalDifficulty:
+- Low
+- Medium
+- High
+
+competitionLevel:
+- Low
+- Medium
+- High
+
+5. strengths must contain 3-5 items.
+
+6. weaknesses must contain 3-5 items.
+
+7. risks must contain 3-5 items.
+
+8. recommendations must contain 3-5 actionable suggestions.
+
+9. verdict should be a short paragraph (2-4 sentences).
+
+Return EXACTLY this JSON:
+
+{
+  "overallScore": 0,
+  "innovation": 0,
+  "marketDemand": 0,
+  "businessViability": 0,
+  "technicalFeasibility": 0,
+  "scalability": 0,
+  "marketPotential": "",
+  "technicalDifficulty": "",
+  "competitionLevel": "",
+  "strengths": [],
+  "weaknesses": [],
+  "risks": [],
+  "recommendations": [],
+  "verdict": ""
+}
+`;
+
+        const response = await ai.models.generateContent({
+          model: "gemini-flash-latest",
+          contents: prompt,
+        });
+
+        const report = JSON.parse(
+          response.text
+            .replace(/```json/g, "")
+            .replace(/```/g, "")
+            .trim(),
+        );
+
+        await ideasCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+          },
+          {
+            $set: {
+              validationReport: report,
+              validatedAt: new Date(),
+            },
+          },
+        );
+
+        res.status(200).json({
+          success: true,
+          validationReport: report,
+        });
+      } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+          success: false,
+          message: error.message,
+        });
+      }
+    });
+
+    // ============================================
     // FEATURED IDEAS
     // ============================================
 
@@ -158,7 +293,7 @@ async function run() {
         const ideas = await ideasCollection
           .find({})
           .sort({ createdAt: -1 })
-          .limit(4)
+          .limit(3)
           .toArray();
 
         res.send(ideas);
@@ -181,20 +316,11 @@ async function run() {
 
         const totalIdeas = ideas.length;
 
-        const publicIdeas = ideas.filter(
-          (idea) => idea.isPublic
-        ).length;
-
-        const privateIdeas = totalIdeas - publicIdeas;
-
-        const totalCategories = new Set(
-          ideas.map((idea) => idea.category)
-        ).size;
+        const totalCategories = new Set(ideas.map((idea) => idea.category))
+          .size;
 
         res.send({
           totalIdeas,
-          publicIdeas,
-          privateIdeas,
           totalCategories,
         });
       } catch (error) {
@@ -214,8 +340,6 @@ async function run() {
       try {
         const idea = {
           ...req.body,
-
-          createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
 
@@ -232,45 +356,6 @@ async function run() {
         res.status(500).send({
           success: false,
           message: "Failed to create idea.",
-        });
-      }
-    });
-        // ============================================
-    // UPDATE IDEA
-    // ============================================
-
-    app.patch("/api/ideas/:id", verifyToken, async (req, res) => {
-      try {
-        const { id } = req.params;
-
-        const updatedIdea = {
-          ...req.body,
-          updatedAt: new Date().toISOString(),
-        };
-
-        const result = await ideasCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: updatedIdea,
-          }
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).send({
-            message: "Idea not found.",
-          });
-        }
-
-        res.send({
-          success: true,
-          message: "Idea updated successfully.",
-        });
-      } catch (error) {
-        console.error(error);
-
-        res.status(500).send({
-          success: false,
-          message: "Failed to update idea.",
         });
       }
     });
